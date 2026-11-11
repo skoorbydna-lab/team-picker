@@ -128,12 +128,12 @@ textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--
 
 .tok{display:flex;flex-direction:column;align-items:center;width:92px;touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab;border:0;background:none;padding:0;color:#fff}
 .tok .shirt{width:54px;height:54px;border-radius:50%;background:var(--tc);color:var(--tt);display:grid;place-items:center;font-family:"Barlow Condensed",sans-serif;font-weight:800;font-size:24px;box-shadow:0 3px 0 rgba(0,0,0,.35),inset 0 -6px 0 rgba(0,0,0,.12);border:3px solid rgba(255,255,255,.9);transition:transform .12s}
-.tok .pn{margin-top:5px;max-width:92px;background:rgba(5,14,9,.82);border-radius:5px;padding:2px 7px;font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:16px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tok .pn{margin-top:5px;max-width:92px;background:rgba(5,14,9,.82);border-radius:5px;padding:2px 7px;font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:18px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tok .ps{margin-top:2px;font-family:"Barlow Condensed",sans-serif;font-weight:600;font-size:12.5px;line-height:1.15;color:rgba(255,255,255,.9);text-shadow:0 1px 2px rgba(0,0,0,.6);text-align:center;max-width:100%}
 .tok.sel .shirt{transform:scale(1.12);border-color:#fff;box-shadow:0 0 0 4px rgba(255,255,255,.5),0 3px 0 rgba(0,0,0,.35)}
 .tok.target .shirt{transform:scale(1.15);box-shadow:0 0 0 5px #fff}
 .tok.dragging{opacity:.3}
-@media (max-width:420px){.tok{width:74px}.tok .shirt{width:46px;height:46px;font-size:20px}.tok .pn{font-size:14.5px;max-width:74px}.tok .ps{font-size:11px}}
+@media (max-width:420px){.tok{width:74px}.tok .shirt{width:46px;height:46px;font-size:20px}.tok .pn{font-size:16px;max-width:78px}.tok .ps{font-size:11px}}
 .drag-ghost{position:fixed;z-index:100;pointer-events:none;transform:translate(-50%,-50%) scale(1.1)}
 
 .mid{display:flex;flex-direction:column;justify-content:center;gap:12px;min-width:210px;padding:6px 0}
@@ -819,82 +819,71 @@ textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--
     return t + "…";
   }
   async function drawLineup() {
-    try { await Promise.all([document.fonts.load('800 italic 40px "Barlow Condensed"'), document.fonts.load('700 30px "Barlow Condensed"'), document.fonts.load('800 36px "Barlow Condensed"')]); } catch (e) {}
+    try { await Promise.all([document.fonts.load('800 italic 40px "Barlow Condensed"'), document.fonts.load('700 30px "Barlow Condensed"'), document.fonts.load('800 36px "Barlow Condensed"'), document.fonts.load('600 24px "Barlow Condensed"')]); } catch (e) {}
     const F = '"Barlow Condensed", "Arial Narrow", Arial, sans-serif';
-    const W = 1600, H = 1060, cv = document.createElement("canvas");
+    // Portrait: one team in each half, facing each other up and down the pitch.
+    const W = 1200, H = 2000, cv = document.createElement("canvas");
     cv.width = W; cv.height = H;
     const ctx = cv.getContext("2d");
     const L = S.lineup, col = S.colours;
-    ctx.fillStyle = "#0b1a12"; ctx.fillRect(0, 0, W, H);
+    const px = 40, pw = W - 80, stripH = 72;
+    const stripA = 146, py = stripA + stripH + 14, ph = 1600, stripB = py + ph + 14;
+    cv.height = stripB + stripH + 36;
+    ctx.fillStyle = "#0b1a12"; ctx.fillRect(0, 0, W, cv.height);
 
     // title row
     const date = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
-    ctx.fillStyle = "#fff"; ctx.textBaseline = "alphabetic";
-    ctx.font = `italic 800 54px ${F}`; ctx.textAlign = "left";
-    ctx.fillText(fitText(ctx, (S.title || "Team line-ups").toUpperCase(), 1000), 40, 70);
-    ctx.font = `600 28px ${F}`; ctx.textAlign = "right"; ctx.fillStyle = "rgba(255,255,255,.7)";
-    ctx.fillText(date, W - 40, 66);
+    ctx.textBaseline = "alphabetic"; ctx.fillStyle = "#fff";
+    ctx.font = `italic 800 58px ${F}`; ctx.textAlign = "left";
+    ctx.fillText(fitText(ctx, (S.title || "Team line-ups").toUpperCase(), W - 80), 40, 76);
+    ctx.font = `600 30px ${F}`; ctx.fillStyle = "rgba(255,255,255,.7)";
+    ctx.fillText(date, 40, 118);
 
-    // team strips
-    const sy = 96, sh = 64, half = (W - 80) / 2;
-    [["a", 40, "left"], ["b", 40 + half + 40 - 40, "right"]].forEach(([t, x0]) => {
-      const x = t === "a" ? 40 : W / 2 + 34, w = half - 34;
-      ctx.fillStyle = col[t]; rr(ctx, x, sy, w, sh, 10); ctx.fill();
-      const tc = textOn(col[t]); ctx.fillStyle = tc;
-      const nm = (S.names[t] || (t === "a" ? "Team A" : "Team B")).toUpperCase();
-      const info = `${rowsFor(L[t].length, t).join("-")}   ${Math.round(totals(L[t]).all)}`;
-      ctx.textBaseline = "middle";
-      if (t === "a") {
-        ctx.font = `600 30px ${F}`; ctx.textAlign = "right"; ctx.fillText(info, x + w - 20, sy + sh / 2 + 2);
-        const iw = ctx.measureText(info).width;
-        ctx.font = `italic 800 42px ${F}`; ctx.textAlign = "left"; ctx.fillText(fitText(ctx, nm, w - iw - 60), x + 20, sy + sh / 2 + 2);
-      } else {
-        ctx.font = `600 30px ${F}`; ctx.textAlign = "left";
-        const infoB = `${Math.round(totals(L[t]).all)}   ${rowsFor(L[t].length, t).join("-")}`;
-        ctx.fillText(infoB, x + 20, sy + sh / 2 + 2);
-        const iw = ctx.measureText(infoB).width;
-        ctx.font = `italic 800 42px ${F}`; ctx.textAlign = "right"; ctx.fillText(fitText(ctx, nm, w - iw - 60), x + w - 20, sy + sh / 2 + 2);
-      }
-    });
-    ctx.fillStyle = "#fff"; ctx.font = `italic 800 34px ${F}`; ctx.textAlign = "center"; ctx.fillText("v", W / 2, sy + sh / 2 + 2);
+    function strip(t, y) {
+      ctx.fillStyle = col[t]; rr(ctx, px, y, pw, stripH, 12); ctx.fill();
+      const tc = textOn(col[t]); ctx.fillStyle = tc; ctx.textBaseline = "middle";
+      const info = `${rowsFor(L[t].length, t).join("-")} + GK     Team rating ${Math.round(totals(L[t]).all)}`;
+      ctx.font = `600 30px ${F}`; ctx.textAlign = "right"; ctx.fillText(info, px + pw - 24, y + stripH / 2 + 2);
+      const iw = ctx.measureText(info).width;
+      ctx.font = `italic 800 46px ${F}`; ctx.textAlign = "left";
+      ctx.fillText(fitText(ctx, (S.names[t] || (t === "a" ? "Team A" : "Team B")).toUpperCase(), pw - iw - 80), px + 24, y + stripH / 2 + 2);
+    }
+    strip("a", stripA); strip("b", stripB);
 
-    // pitch
-    const px = 40, py = 190, pw = W - 80, ph = H - py - 40;
-    const bands = 14;
-    for (let i = 0; i < bands; i++) { ctx.fillStyle = i % 2 ? "#2a7d38" : "#2f8a3e"; ctx.fillRect(px + (pw / bands) * i, py, pw / bands + 1, ph); }
+    // pitch, stripes across
+    const bands = 16;
+    for (let i = 0; i < bands; i++) { ctx.fillStyle = i % 2 ? "#2a7d38" : "#2f8a3e"; ctx.fillRect(px, py + (ph / bands) * i, pw, ph / bands + 1); }
     ctx.strokeStyle = "rgba(255,255,255,.6)"; ctx.lineWidth = 4;
     const inset = 18, lx = px + inset, ly = py + inset, lw = pw - inset * 2, lh = ph - inset * 2;
     ctx.strokeRect(lx, ly, lw, lh);
-    ctx.beginPath(); ctx.moveTo(px + pw / 2, ly); ctx.lineTo(px + pw / 2, ly + lh); ctx.stroke();
-    ctx.beginPath(); ctx.arc(px + pw / 2, py + ph / 2, 105, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(lx, py + ph / 2); ctx.lineTo(lx + lw, py + ph / 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(px + pw / 2, py + ph / 2, 110, 0, Math.PI * 2); ctx.stroke();
     ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.beginPath(); ctx.arc(px + pw / 2, py + ph / 2, 6, 0, Math.PI * 2); ctx.fill();
-    const boxD = 210, boxH = 440, gD = 80, gH = 200, goalH = 130;
-    ctx.strokeRect(lx, py + ph / 2 - boxH / 2, boxD, boxH);
-    ctx.strokeRect(lx + lw - boxD, py + ph / 2 - boxH / 2, boxD, boxH);
-    ctx.strokeRect(lx, py + ph / 2 - gH / 2, gD, gH);
-    ctx.strokeRect(lx + lw - gD, py + ph / 2 - gH / 2, gD, gH);
-    ctx.strokeRect(px + 2, py + ph / 2 - goalH / 2, inset - 2, goalH);
-    ctx.strokeRect(lx + lw, py + ph / 2 - goalH / 2, inset - 2, goalH);
+    const boxW = 560, boxD = 220, gW = 260, gD = 85, goalW = 150, cx0 = px + pw / 2;
+    ctx.strokeRect(cx0 - boxW / 2, ly, boxW, boxD);
+    ctx.strokeRect(cx0 - boxW / 2, ly + lh - boxD, boxW, boxD);
+    ctx.strokeRect(cx0 - gW / 2, ly, gW, gD);
+    ctx.strokeRect(cx0 - gW / 2, ly + lh - gD, gW, gD);
+    ctx.strokeRect(cx0 - goalW / 2, py + 2, goalW, inset - 2);
+    ctx.strokeRect(cx0 - goalW / 2, ly + lh, goalW, inset - 2);
 
-    const R = 42;
+    const R = 44;
     function disc(cx, cy, t, p) {
       ctx.save();
       ctx.shadowColor = "rgba(0,0,0,.4)"; ctx.shadowOffsetY = 4; ctx.shadowBlur = 6;
       ctx.fillStyle = col[t]; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
       ctx.lineWidth = 5; ctx.strokeStyle = "#fff"; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      if (S.showRatings) { ctx.fillStyle = textOn(col[t]); ctx.font = `800 38px ${F}`; ctx.fillText(fmt(ovr(p)), cx, cy + 2); }
+      ctx.font = `700 39px ${F}`;
+      const name = fitText(ctx, p.name, 230), nw = ctx.measureText(name).width;
+      ctx.fillStyle = "rgba(5,14,9,.85)"; rr(ctx, cx - nw / 2 - 12, cy + R + 8, nw + 24, 50, 8); ctx.fill();
+      ctx.fillStyle = "#fff"; ctx.fillText(name, cx, cy + R + 34);
       if (S.showRatings) {
-        ctx.fillStyle = textOn(col[t]); ctx.font = `800 36px ${F}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.fillText(fmt(ovr(p)), cx, cy + 2);
-      }
-      ctx.font = `700 30px ${F}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      const name = fitText(ctx, p.name, 190), nw = ctx.measureText(name).width;
-      ctx.fillStyle = "rgba(5,14,9,.85)"; rr(ctx, cx - nw / 2 - 10, cy + R + 8, nw + 20, 40, 7); ctx.fill();
-      ctx.fillStyle = "#fff"; ctx.fillText(name, cx, cy + R + 29);
-      if (S.showRatings) {
-        ctx.font = `600 21px ${F}`; ctx.fillStyle = "rgba(255,255,255,.95)";
+        ctx.font = `600 23px ${F}`; ctx.fillStyle = "rgba(255,255,255,.95)";
         ctx.shadowColor = "rgba(0,0,0,.7)"; ctx.shadowBlur = 4;
-        ctx.fillText(ATTRS.map(([k, , s]) => s + p[k]).join(" "), cx, cy + R + 64);
+        ctx.fillText(ATTRS.map(([k, , s]) => s + p[k]).join(" "), cx, cy + R + 76);
         ctx.shadowBlur = 0; ctx.shadowColor = "transparent";
       }
     }
@@ -906,20 +895,20 @@ textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--
       ctx.fillStyle = "rgba(5,14,9,.7)"; rr(ctx, cx - tw / 2 - 10, cy + R + 6, tw + 20, 36, 7); ctx.fill();
       ctx.fillStyle = "#fff"; ctx.fillText(t, cx, cy + R + 25);
     }
-    const hw = pw / 2;
+    // y positions measured from a team's own goal line; labels sit under each disc,
+    // so the bottom team's rows are nudged up to keep names off the line.
     ["a", "b"].forEach(t => {
       const ids = L[t], rows = rowsFor(ids.length, t);
-      const mirror = x => t === "a" ? x : px + pw - (x - px);
-      const yMid = py + ph / 2 - 24;
-      gk(mirror(px + 92), yMid);
-      const x0 = px + 255, x1 = px + hw - 150;
+      const yAt = d => t === "a" ? py + d : py + ph - d - 55;
+      gk(cx0, t === "a" ? py + 90 : py + ph - 135);
+      const d0 = 255, d1 = ph / 2 - 150;
       let i = 0;
       rows.forEach((c, ri) => {
-        const x = rows.length === 1 ? (x0 + x1) / 2 : x0 + (x1 - x0) * (ri / (rows.length - 1));
+        const d = rows.length === 1 ? (d0 + d1) / 2 : d0 + (d1 - d0) * (ri / (rows.length - 1));
         for (let j = 0; j < c; j++) {
           const p = byId(ids[i++]); if (!p) continue;
-          const y = c === 1 ? py + ph / 2 - 24 : py + 22 + (ph - 120) * ((j + 0.5) / c);
-          disc(mirror(x), y, t, p);
+          const x = px + 30 + (pw - 60) * ((j + 0.5) / c);
+          disc(x, yAt(d), t, p);
         }
       });
     });
