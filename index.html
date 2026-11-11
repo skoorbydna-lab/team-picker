@@ -7,7 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,500;0,600;0,700;0,800;1,800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
 :root{
   --bg:#eef1ec; --surface:#ffffff; --surface-2:#e4e9e2; --ink:#14201a; --ink-soft:#56645b;
@@ -168,6 +167,10 @@ textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--
 
 .empty{text-align:center;padding:36px 16px;color:var(--ink-soft)}
 .empty .big{font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:24px;color:var(--ink);margin-bottom:6px}
+.modal{position:fixed;inset:0;z-index:150;background:rgba(0,0,0,.72);display:grid;place-items:center;padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px))}
+.modal[hidden]{display:none}
+.modal .box{background:var(--surface);border-radius:16px;padding:14px;width:100%;max-width:960px;max-height:100%;overflow:auto}
+.modal img{display:block;width:100%;height:auto;border-radius:10px;background:#0b1a12}
 .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:999px;font-weight:600;opacity:0;transition:opacity .2s,transform .2s;z-index:200;pointer-events:none}
 .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
 .sync{font-size:13px;color:var(--ink-soft)}
@@ -247,8 +250,7 @@ textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--
       <span class="sp"></span>
       <button class="btn small ghost" id="reshuffle">Reshuffle</button>
       <button class="btn small ghost" id="copyText">Copy text</button>
-      <button class="btn small" id="whatsapp" style="background:#25d366;color:#05230f">Send to WhatsApp</button>
-      <button class="btn small ghost" id="savePic" hidden>Save picture</button>
+      <button class="btn small" id="whatsapp" style="background:#25d366;color:#05230f">Share to WhatsApp</button>
     </div>
 
     <div id="lineupWrap"></div>
@@ -274,6 +276,21 @@ textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--
       </div>
     </div>
   </section>
+</div>
+<div class="modal" id="shareModal" hidden role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+  <div class="box">
+    <div class="row" style="justify-content:space-between;margin-bottom:10px">
+      <h2 id="shareTitle" style="font-size:22px;margin:0">Line-up image</h2>
+      <button class="btn small ghost" id="shareClose">Close</button>
+    </div>
+    <img id="shareImg" alt="Both teams lined up on a pitch">
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="shareNow" style="background:#25d366;color:#05230f">Share image</button>
+      <button class="btn ghost" id="saveImg">Save image</button>
+      <button class="btn ghost" id="sendText">Send as text instead</button>
+    </div>
+    <p class="hint" id="shareHint"></p>
+  </div>
 </div>
 <div class="toast" id="toast" role="status"></div>
 
@@ -792,39 +809,164 @@ textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--
       ta.remove();
     }
   };
-  $("#whatsapp").onclick = () => { window.open("https://wa.me/?text=" + encodeURIComponent(shareText()), "_blank", "noopener"); };
+  function sendText() { window.open("https://wa.me/?text=" + encodeURIComponent(shareText()), "_blank", "noopener"); }
 
-  let downloads = null;
-  const standalone = !(window.claude && window.claude.use); // e.g. hosted on GitHub Pages
-  if (standalone && window.html2canvas) { $("#savePic").hidden = false; $("#savePic").textContent = "Share picture"; }
-  (async () => {
-    try {
-      if (standalone) return;
-      downloads = await claude.use("downloads");
-      if (downloads && window.html2canvas) $("#savePic").hidden = false;
-    } catch (e) {}
-  })();
-  $("#savePic").onclick = async () => {
-    const card = $("#card"); if (!card) return;
-    try {
-      const canvas = await html2canvas(card, { backgroundColor: "#0b1a12", scale: 2, useCORS: true, logging: false });
-      const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
-      if (standalone) {
-        const file = new File([blob], "line-ups.png", { type: "image/png" });
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-          try { await navigator.share({ files: [file], title: S.title || "Team line-ups" }); } catch (e) {}
-          return;
-        }
-        const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "line-ups.png";
-        document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-        return;
+  /* ---------- line-up image (drawn on a canvas, head to head on one pitch) ---------- */
+  function rr(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+  function fitText(ctx, text, max) {
+    if (ctx.measureText(text).width <= max) return text;
+    let t = text; while (t.length > 1 && ctx.measureText(t + "…").width > max) t = t.slice(0, -1);
+    return t + "…";
+  }
+  async function drawLineup() {
+    try { await Promise.all([document.fonts.load('800 italic 40px "Barlow Condensed"'), document.fonts.load('700 30px "Barlow Condensed"'), document.fonts.load('800 36px "Barlow Condensed"')]); } catch (e) {}
+    const F = '"Barlow Condensed", "Arial Narrow", Arial, sans-serif';
+    const W = 1600, H = 1060, cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    const ctx = cv.getContext("2d");
+    const L = S.lineup, col = S.colours;
+    ctx.fillStyle = "#0b1a12"; ctx.fillRect(0, 0, W, H);
+
+    // title row
+    const date = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+    ctx.fillStyle = "#fff"; ctx.textBaseline = "alphabetic";
+    ctx.font = `italic 800 54px ${F}`; ctx.textAlign = "left";
+    ctx.fillText(fitText(ctx, (S.title || "Team line-ups").toUpperCase(), 1000), 40, 70);
+    ctx.font = `600 28px ${F}`; ctx.textAlign = "right"; ctx.fillStyle = "rgba(255,255,255,.7)";
+    ctx.fillText(date, W - 40, 66);
+
+    // team strips
+    const sy = 96, sh = 64, half = (W - 80) / 2;
+    [["a", 40, "left"], ["b", 40 + half + 40 - 40, "right"]].forEach(([t, x0]) => {
+      const x = t === "a" ? 40 : W / 2 + 34, w = half - 34;
+      ctx.fillStyle = col[t]; rr(ctx, x, sy, w, sh, 10); ctx.fill();
+      const tc = textOn(col[t]); ctx.fillStyle = tc;
+      const nm = (S.names[t] || (t === "a" ? "Team A" : "Team B")).toUpperCase();
+      const info = `${rowsFor(L[t].length, t).join("-")}   ${Math.round(totals(L[t]).all)}`;
+      ctx.textBaseline = "middle";
+      if (t === "a") {
+        ctx.font = `600 30px ${F}`; ctx.textAlign = "right"; ctx.fillText(info, x + w - 20, sy + sh / 2 + 2);
+        const iw = ctx.measureText(info).width;
+        ctx.font = `italic 800 42px ${F}`; ctx.textAlign = "left"; ctx.fillText(fitText(ctx, nm, w - iw - 60), x + 20, sy + sh / 2 + 2);
+      } else {
+        ctx.font = `600 30px ${F}`; ctx.textAlign = "left";
+        const infoB = `${Math.round(totals(L[t]).all)}   ${rowsFor(L[t].length, t).join("-")}`;
+        ctx.fillText(infoB, x + 20, sy + sh / 2 + 2);
+        const iw = ctx.measureText(infoB).width;
+        ctx.font = `italic 800 42px ${F}`; ctx.textAlign = "right"; ctx.fillText(fitText(ctx, nm, w - iw - 60), x + w - 20, sy + sh / 2 + 2);
       }
-      if (!downloads) return;
-      await downloads.save({ filename: "line-ups.png", data: blob });
-    } catch (e) {
-      if (e && e.code === "declined") return;
-      if (e && (e.code === "unavailable" || e.code === "not_granted")) $("#savePic").hidden = true;
-      toast("Couldn’t save the picture — take a screenshot instead");
+    });
+    ctx.fillStyle = "#fff"; ctx.font = `italic 800 34px ${F}`; ctx.textAlign = "center"; ctx.fillText("v", W / 2, sy + sh / 2 + 2);
+
+    // pitch
+    const px = 40, py = 190, pw = W - 80, ph = H - py - 40;
+    const bands = 14;
+    for (let i = 0; i < bands; i++) { ctx.fillStyle = i % 2 ? "#2a7d38" : "#2f8a3e"; ctx.fillRect(px + (pw / bands) * i, py, pw / bands + 1, ph); }
+    ctx.strokeStyle = "rgba(255,255,255,.6)"; ctx.lineWidth = 4;
+    const inset = 18, lx = px + inset, ly = py + inset, lw = pw - inset * 2, lh = ph - inset * 2;
+    ctx.strokeRect(lx, ly, lw, lh);
+    ctx.beginPath(); ctx.moveTo(px + pw / 2, ly); ctx.lineTo(px + pw / 2, ly + lh); ctx.stroke();
+    ctx.beginPath(); ctx.arc(px + pw / 2, py + ph / 2, 105, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.beginPath(); ctx.arc(px + pw / 2, py + ph / 2, 6, 0, Math.PI * 2); ctx.fill();
+    const boxD = 210, boxH = 440, gD = 80, gH = 200, goalH = 130;
+    ctx.strokeRect(lx, py + ph / 2 - boxH / 2, boxD, boxH);
+    ctx.strokeRect(lx + lw - boxD, py + ph / 2 - boxH / 2, boxD, boxH);
+    ctx.strokeRect(lx, py + ph / 2 - gH / 2, gD, gH);
+    ctx.strokeRect(lx + lw - gD, py + ph / 2 - gH / 2, gD, gH);
+    ctx.strokeRect(px + 2, py + ph / 2 - goalH / 2, inset - 2, goalH);
+    ctx.strokeRect(lx + lw, py + ph / 2 - goalH / 2, inset - 2, goalH);
+
+    const R = 42;
+    function disc(cx, cy, t, p) {
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,.4)"; ctx.shadowOffsetY = 4; ctx.shadowBlur = 6;
+      ctx.fillStyle = col[t]; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      ctx.lineWidth = 5; ctx.strokeStyle = "#fff"; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+      if (S.showRatings) {
+        ctx.fillStyle = textOn(col[t]); ctx.font = `800 36px ${F}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(fmt(ovr(p)), cx, cy + 2);
+      }
+      ctx.font = `700 30px ${F}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      const name = fitText(ctx, p.name, 190), nw = ctx.measureText(name).width;
+      ctx.fillStyle = "rgba(5,14,9,.85)"; rr(ctx, cx - nw / 2 - 10, cy + R + 8, nw + 20, 40, 7); ctx.fill();
+      ctx.fillStyle = "#fff"; ctx.fillText(name, cx, cy + R + 29);
+      if (S.showRatings) {
+        ctx.font = `600 21px ${F}`; ctx.fillStyle = "rgba(255,255,255,.95)";
+        ctx.shadowColor = "rgba(0,0,0,.7)"; ctx.shadowBlur = 4;
+        ctx.fillText(ATTRS.map(([k, , s]) => s + p[k]).join(" "), cx, cy + R + 64);
+        ctx.shadowBlur = 0; ctx.shadowColor = "transparent";
+      }
+    }
+    function gk(cx, cy) {
+      ctx.setLineDash([10, 8]); ctx.lineWidth = 5; ctx.strokeStyle = "rgba(255,255,255,.9)";
+      ctx.fillStyle = "rgba(255,255,255,.1)"; ctx.beginPath(); ctx.arc(cx, cy, R - 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = "#fff"; ctx.font = `800 30px ${F}`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("GK", cx, cy + 2);
+      ctx.font = `italic 600 26px ${F}`; const t = "Rotating", tw = ctx.measureText(t).width;
+      ctx.fillStyle = "rgba(5,14,9,.7)"; rr(ctx, cx - tw / 2 - 10, cy + R + 6, tw + 20, 36, 7); ctx.fill();
+      ctx.fillStyle = "#fff"; ctx.fillText(t, cx, cy + R + 25);
+    }
+    const hw = pw / 2;
+    ["a", "b"].forEach(t => {
+      const ids = L[t], rows = rowsFor(ids.length, t);
+      const mirror = x => t === "a" ? x : px + pw - (x - px);
+      const yMid = py + ph / 2 - 24;
+      gk(mirror(px + 92), yMid);
+      const x0 = px + 255, x1 = px + hw - 150;
+      let i = 0;
+      rows.forEach((c, ri) => {
+        const x = rows.length === 1 ? (x0 + x1) / 2 : x0 + (x1 - x0) * (ri / (rows.length - 1));
+        for (let j = 0; j < c; j++) {
+          const p = byId(ids[i++]); if (!p) continue;
+          const y = c === 1 ? py + ph / 2 - 24 : py + 22 + (ph - 120) * ((j + 0.5) / c);
+          disc(mirror(x), y, t, p);
+        }
+      });
+    });
+    return cv;
+  }
+
+  let downloads = null, shareBlob = null;
+  const standalone = !(window.claude && window.claude.use); // e.g. hosted on GitHub Pages
+  (async () => { try { if (!standalone) downloads = await claude.use("downloads"); } catch (e) {} })();
+
+  async function openShare() {
+    if (!S.lineup) return;
+    const cv = await drawLineup();
+    shareBlob = await new Promise(r => cv.toBlob(r, "image/png"));
+    const img = $("#shareImg"); if (img.src) URL.revokeObjectURL(img.src);
+    img.src = URL.createObjectURL(shareBlob);
+    const file = new File([shareBlob], "line-ups.png", { type: "image/png" });
+    const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
+    $("#shareNow").hidden = !canShare;
+    $("#saveImg").hidden = !(standalone || downloads);
+    $("#shareHint").textContent = canShare ? "Share image opens your phone’s share menu — pick WhatsApp." : "Save the image, then send it in WhatsApp as a photo.";
+    if (!S.showRatings) $("#shareHint").textContent += " Player ratings are hidden.";
+    $("#shareModal").hidden = false; $("#shareClose").focus();
+  }
+  async function saveImage() {
+    if (!shareBlob) return;
+    if (standalone) {
+      const a = document.createElement("a"); a.href = URL.createObjectURL(shareBlob); a.download = "line-ups.png";
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      return;
+    }
+    try { await downloads.save({ filename: "line-ups.png", data: shareBlob }); toast("Image saved"); }
+    catch (e) { if (e && e.code === "declined") return; toast("Couldn’t save the image — take a screenshot instead"); }
+  }
+  $("#whatsapp").onclick = openShare;
+  $("#shareClose").onclick = () => { $("#shareModal").hidden = true; };
+  $("#shareModal").onclick = e => { if (e.target.id === "shareModal") $("#shareModal").hidden = true; };
+  document.addEventListener("keydown", e => { if (e.key === "Escape") $("#shareModal").hidden = true; });
+  $("#sendText").onclick = sendText;
+  $("#saveImg").onclick = saveImage;
+  $("#shareNow").onclick = async () => {
+    const file = new File([shareBlob], "line-ups.png", { type: "image/png" });
+    try { await navigator.share({ files: [file], title: S.title || "Team line-ups" }); }
+    catch (e) {
+      if (e && e.name === "AbortError") return;
+      $("#shareNow").hidden = true;
+      $("#shareHint").textContent = "Sharing isn’t allowed here. Save the image, then send it in WhatsApp as a photo.";
     }
   };
 
