@@ -204,6 +204,25 @@ textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--
       </div>
     </div>
     <ul class="squad" id="squadList"></ul>
+    <div class="panel" style="margin-top:20px">
+      <h2 style="font-size:20px">Move your squad</h2>
+      <p class="sub" style="margin-bottom:12px">Copy a squad code here and paste it into another copy of the app, like your GitHub page, to bring all your players and ratings across.</p>
+      <div class="row">
+        <button class="btn primary" id="exportBtn">Copy squad code</button>
+        <button class="btn ghost" id="importToggle">Paste a squad code</button>
+      </div>
+      <div id="exportBox" hidden style="margin-top:12px">
+        <textarea id="exportText" readonly aria-label="Squad code"></textarea>
+        <p class="hint" style="margin-top:6px">Copied. If it didn’t copy, select all of this text and copy it yourself.</p>
+      </div>
+      <div id="importBox" hidden style="margin-top:12px">
+        <textarea id="importText" placeholder="Paste the squad code here" aria-label="Paste squad code"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="btn primary" id="importBtn">Import players</button>
+          <span class="hint" style="margin:0">Players with the same name get the new ratings. Everyone else is added.</span>
+        </div>
+      </div>
+    </div>
   </section>
 
   <!-- TODAY -->
@@ -311,7 +330,7 @@ textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--
   });
   (async () => {
     try {
-      if (!window.claude || !window.claude.use) return;
+      if (!window.claude || !window.claude.use) { setSync("Saved on this device"); return; }
       const [db, user] = await Promise.all([claude.use("db"), claude.use("user")]);
       if (!db || !user) { setSync("Saved on this device"); return; }
       const id = await user.id();
@@ -776,24 +795,77 @@ textarea{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--
   $("#whatsapp").onclick = () => { window.open("https://wa.me/?text=" + encodeURIComponent(shareText()), "_blank", "noopener"); };
 
   let downloads = null;
+  const standalone = !(window.claude && window.claude.use); // e.g. hosted on GitHub Pages
+  if (standalone && window.html2canvas) { $("#savePic").hidden = false; $("#savePic").textContent = "Share picture"; }
   (async () => {
     try {
-      if (!window.claude || !window.claude.use) return;
+      if (standalone) return;
       downloads = await claude.use("downloads");
       if (downloads && window.html2canvas) $("#savePic").hidden = false;
     } catch (e) {}
   })();
   $("#savePic").onclick = async () => {
-    const card = $("#card"); if (!card || !downloads) return;
+    const card = $("#card"); if (!card) return;
     try {
       const canvas = await html2canvas(card, { backgroundColor: "#0b1a12", scale: 2, useCORS: true, logging: false });
       const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
+      if (standalone) {
+        const file = new File([blob], "line-ups.png", { type: "image/png" });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          try { await navigator.share({ files: [file], title: S.title || "Team line-ups" }); } catch (e) {}
+          return;
+        }
+        const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "line-ups.png";
+        document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+        return;
+      }
+      if (!downloads) return;
       await downloads.save({ filename: "line-ups.png", data: blob });
     } catch (e) {
       if (e && e.code === "declined") return;
       if (e && (e.code === "unavailable" || e.code === "not_granted")) $("#savePic").hidden = true;
       toast("Couldn’t save the picture — take a screenshot instead");
     }
+  };
+
+  /* ---------- export / import ---------- */
+  const CODE_PREFIX = "TEAMPICKER1:";
+  function encode(obj) { return CODE_PREFIX + btoa(unescape(encodeURIComponent(JSON.stringify(obj)))); }
+  function decode(text) {
+    const t = text.trim().replace(/\s+/g, "");
+    if (t.startsWith(CODE_PREFIX)) return JSON.parse(decodeURIComponent(escape(atob(t.slice(CODE_PREFIX.length)))));
+    return JSON.parse(text.trim());
+  }
+  $("#exportBtn").onclick = async () => {
+    if (!S.players.length) { toast("Add some players first"); return; }
+    const code = encode({ v: 1, players: S.players.map(p => { const o = { name: p.name }; ATTRS.forEach(([k]) => o[k] = p[k]); return o; }), colours: S.colours, names: S.names, title: S.title, formations: S.formations || null });
+    $("#exportText").value = code; $("#exportBox").hidden = false; $("#importBox").hidden = true;
+    let ok = false;
+    try { await navigator.clipboard.writeText(code); ok = true; } catch (e) {
+      $("#exportText").select(); try { ok = document.execCommand("copy"); } catch (_) {}
+    }
+    toast(ok ? "Squad code copied" : "Select the code and copy it");
+    $("#exportText").focus(); $("#exportText").select();
+  };
+  $("#importToggle").onclick = () => { $("#importBox").hidden = !$("#importBox").hidden; $("#exportBox").hidden = true; if (!$("#importBox").hidden) $("#importText").focus(); };
+  $("#importBtn").onclick = () => {
+    let data;
+    try { data = decode($("#importText").value); } catch (e) { toast("That code isn’t valid — copy it again in full"); return; }
+    if (!data || !Array.isArray(data.players)) { toast("That code isn’t valid — copy it again in full"); return; }
+    let added = 0, updated = 0;
+    const clamp = v => Math.min(10, Math.max(1, Math.round(Number(v) || 5)));
+    data.players.forEach(ip => {
+      const name = String(ip.name || "").trim().slice(0, 24); if (!name) return;
+      let p = S.players.find(x => x.name.toLowerCase() === name.toLowerCase());
+      if (p) updated++; else { p = { id: uid(), name }; S.players.push(p); added++; }
+      ATTRS.forEach(([k]) => p[k] = clamp(ip[k]));
+    });
+    if (data.colours && /^#[0-9a-f]{6}$/i.test(data.colours.a) && /^#[0-9a-f]{6}$/i.test(data.colours.b)) S.colours = { a: data.colours.a, b: data.colours.b };
+    if (data.names && typeof data.names.a === "string") S.names = { a: data.names.a.slice(0, 16), b: String(data.names.b || "").slice(0, 16) };
+    if (typeof data.title === "string") S.title = data.title.slice(0, 32);
+    $("#importText").value = ""; $("#importBox").hidden = true;
+    save(); applyColours(); renderSquad(); counts();
+    toast(`${added} added, ${updated} updated`);
   };
 
   /* ---------- go ---------- */
